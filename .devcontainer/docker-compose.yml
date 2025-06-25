@@ -1,0 +1,13 @@
+version: "3.9"
+services:
+  node:
+    build:
+      context: ../
+      dockerfile: .devcontainer/Dockerfile.Node # Dockerfile for the Node service is located in the .devcontainer directory relative to the parent directory of this file.
+    volumes:
+      - ../src:/usr/app/src
+    ports:
+      - "3000:3000"
+    tty: true
+    environment:
+      - CHOKIDAR_USEPOLLING=true
