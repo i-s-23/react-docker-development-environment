@@ -3,7 +3,7 @@ services:
   node:
     build:
       context: ../
-      dockerfile: .devcontainer/Dockerfile.Node
+      dockerfile: .devcontainer/Dockerfile.Node # Dockerfile for the Node service is located in the .devcontainer directory relative to the parent directory of this file.
     volumes:
       - ../src:/usr/app/src
     ports:
