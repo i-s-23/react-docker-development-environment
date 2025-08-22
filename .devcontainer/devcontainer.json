@@ -1,0 +1,33 @@
+{
+	"name": "React Docker",
+	"dockerComposeFile": [
+		"docker-compose.yml"
+	],
+	"service": "node",
+	"workspaceFolder": "/usr/app/",
+	"customizations": {
+		"vscode": {
+			"settings": {
+				"terminal.integrated.defaultProfile.linux": "bash",
+				"editor.guides.bracketPairs": true
+			},
+			// Add the IDs of extensions you want installed when the container is created.
+			"extensions": [
+				"eamodio.gitlens",
+				"chakrounanas.turbo-console-log",
+				"ms-azuretools.vscode-docker",
+				"visualstudioexptteam.vscodeintellicode",
+				"esbenp.prettier-vscode",
+				"dbaeumer.vscode-eslint",
+				"shardulm94.trailing-spaces",
+				"christian-kohler.path-intellisense",
+				"usernamehw.errorlens",
+				"gizak.shortcuts",
+				"ms-vscode.js-debug"
+			]
+		}
+	},
+	"features": {
+		"ghcr.io/devcontainers/features/github-cli": {}
+	}
+}
