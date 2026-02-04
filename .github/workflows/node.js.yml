@@ -1,27 +1,49 @@
-# This workflow will do a clean install of node dependencies, build the source code and run tests across different versions of node
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-nodejs-with-github-actions
-
 name: Node.js CI
 
-on: [push, pull_request]
-    branches: [ tryGitHubActions ]
+# このワークフローの目的:
+# 1. コードの変更（Push/PR）時に自動でビルドとテストを実行し、品質を担保する
+# 2. 環境差異によるビルド失敗を未然に防ぐ
+# 3. テストがパスすることを確認し、安全なマージを支援する
+
+on:
+  push:
+    branches: [tryGitHubActions]
+  pull_request:
+    branches: [tryGitHubActions]
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        node-version: [14.x]
+        # Storybook v10やモダンなReact開発に合わせ、Node.js 14(EOL)から最新のLTS(20/22)を推奨
+        node-version: [20.x, 22.x]
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v1
-      with:
-        node-version: ${{ matrix.node-version }}
-    - run: yarn install
-    - run: yarn run build
-    - run: yarn run test
-    - run: echo Success!
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9 # または使用しているpnpmのメジャーバージョン
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "pnpm" # pnpmのキャッシュを有効化して高速化
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        # --frozen-lockfile: lockファイルを更新せず、既存のものと齟齬がないか確認（CI用）
+
+      - name: Build project
+        run: pnpm run build
+
+      - name: Run tests
+        run: pnpm run test
+
+      - name: Finalize
+        run: echo "Build and Test Success for Node ${{ matrix.node-version }}!"
