@@ -13,5 +13,8 @@ const config = {
   docs: {
     autodocs: "tag",
   },
+  features: {
+    experimentalMdx2: true,
+  },
 };
 export default config;
