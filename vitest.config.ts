@@ -8,5 +8,12 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: './src/setupTests.ts',
+    deps: {
+      optimizer: {
+        web: {
+          include: ['@testing-library/jest-dom'],
+        },
+      },
+    },
   },
 });
