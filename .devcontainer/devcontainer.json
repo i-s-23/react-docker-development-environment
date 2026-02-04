@@ -1,33 +1,50 @@
 {
-	"name": "React Docker",
-	"dockerComposeFile": [
-		"docker-compose.yml"
-	],
-	"service": "node",
-	"workspaceFolder": "/usr/app/",
-	"customizations": {
-		"vscode": {
-			"settings": {
-				"terminal.integrated.defaultProfile.linux": "bash",
-				"editor.guides.bracketPairs": true
-			},
-			// Add the IDs of extensions you want installed when the container is created.
-			"extensions": [
-				"eamodio.gitlens",
-				"chakrounanas.turbo-console-log",
-				"ms-azuretools.vscode-docker",
-				"visualstudioexptteam.vscodeintellicode",
-				"esbenp.prettier-vscode",
-				"dbaeumer.vscode-eslint",
-				"shardulm94.trailing-spaces",
-				"christian-kohler.path-intellisense",
-				"usernamehw.errorlens",
-				"gizak.shortcuts",
-				"ms-vscode.js-debug"
-			]
-		}
-	},
-	"features": {
-		"ghcr.io/devcontainers/features/github-cli": {}
-	}
+  "name": "React Docker",
+  "image": "node:24-bookworm",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        // ブラケットのペアを色付け
+        "editor.bracketPairColorization.enabled": true,
+        "editor.guides.bracketPairs": "active",
+        // 保存時に行末の空白を自動削除
+        "files.trimTrailingWhitespace": true,
+        // 保存時にPrettierやESLintを実行
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.codeActionsOnSave": {
+          "source.fixAll.eslint": "explicit"
+        }
+      },
+      // Add the IDs of extensions you want installed when the container is created.
+      "extensions": [
+        "eamodio.gitlens",
+        "chakrounanas.turbo-console-log",
+        "ms-azuretools.vscode-docker",
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint",
+        "christian-kohler.path-intellisense",
+        "usernamehw.errorlens",
+        "gizak.shortcuts"
+      ]
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli": {}
+  },
+  // 環境変数
+  "containerEnv": {
+    "CHOKIDAR_USEPOLLING": "true"
+  },
+  "forwardPorts": [5173],
+  "portsAttributes": {
+    "5173": {
+      "label": "Application",
+      "onAutoForward": "openPreview"
+    }
+  },
+  // feature経由でのpnpmインストールだとグローバルでパッケージインストールが不可能なため個別でインストールしている
+  "postCreateCommand": "npm install -g @google/gemini-cli pnpm"
 }

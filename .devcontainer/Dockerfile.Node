@@ -1,6 +1,0 @@
-FROM node:15.0.1-buster-slim
-WORKDIR /usr/app
-COPY package.json yarn.lock tsconfig.json ./
-RUN yarn
-COPY . .
-CMD [ "yarn", "start" ]
