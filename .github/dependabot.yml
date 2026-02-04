@@ -1,0 +1,24 @@
+version: 2
+updates:
+  # 1. pnpm パッケージの更新
+  - package-ecosystem: "pnpm"
+    directory: "/" # package.json がある場所
+    schedule:
+      interval: "weekly" # 毎週チェック（daily, monthly も選択可）
+    open-pull-requests-limit: 10
+    groups:
+      dependencies:
+        patterns:
+          - "*" # 大量のPRを避けるため、一旦まとめて1つのPRにする設定（任意）
+
+  # 2. GitHub Actions の更新 (actions/checkout@v4 など)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # 3. DevContainer (Features や Base Image) の更新
+  - package-ecosystem: "devcontainers"
+    directory: "/"
+    schedule:
+      interval: "weekly"
