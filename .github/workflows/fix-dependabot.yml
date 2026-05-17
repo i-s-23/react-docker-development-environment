@@ -54,13 +54,6 @@ jobs:
 
       # 自リポジトリの open Dependabot アラートを取得し /tmp/alerts.json に保存する
       #
-      # バグ修正:
-      # 1. --paginate を使わず per_page=100 を明示
-      #    （--paginate は各ページに -q を個別適用して結果を連結するため、
-      #      複数ページ時に jq length が複数行出力されカウントが壊れる）
-      # 2. .vulnerabilities[0] の決め打ちをやめ ecosystem でフィルタして取得
-      #    （advisory に複数の ecosystem エントリが含まれる場合に誤ったバージョンを参照するバグを修正）
-      # 3. --argjson でシェル変数を渡して jq 変数とシェル変数の混在による quoting 問題を回避
       - name: open Dependabot アラートを取得
         id: fetch-alerts
         env:
