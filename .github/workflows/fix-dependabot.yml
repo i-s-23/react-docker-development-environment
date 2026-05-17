@@ -1,6 +1,5 @@
 name: Fix Dependabot Vulnerabilities
 
-# Public リポジトリのため schedule で自律実行する（orchestrator 不要・GitHub App 不要）
 # 手動実行も可能（severity をカスタマイズできる）
 on:
   schedule:
