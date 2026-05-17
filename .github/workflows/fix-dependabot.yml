@@ -1,0 +1,312 @@
+name: Fix Dependabot Vulnerabilities
+
+# Public リポジトリのため schedule で自律実行する（orchestrator 不要・GitHub App 不要）
+# 手動実行も可能（severity をカスタマイズできる）
+on:
+  schedule:
+    - cron: '0 0 * * 1'  # 毎週月曜 09:00 JST
+  workflow_dispatch:
+    inputs:
+      severity:
+        description: '対象 severity（スペース区切りで複数指定可）'
+        required: false
+        default: 'critical high'
+        type: string
+
+# GitHub App は使用しない。GITHUB_TOKEN のみで完結する
+permissions:
+  security-events: read  # 自リポジトリの Dependabot アラート取得
+  contents: write        # ブランチ作成・push
+  pull-requests: write   # PR 作成
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    env:
+      SEVERITY: ${{ inputs.severity || 'critical high' }}
+    steps:
+      # JS 依存の overrides 適用・インストールに必要な Node.js 環境をセットアップ
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # pnpm を使うリポジトリ向けにセットアップ（yarn/npm はランナーに標準搭載）
+      - name: pnpm をセットアップ
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      # Python 依存のインストールに必要な環境をセットアップ
+      - name: Python をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # poetry / pipenv を使うリポジトリ向けにインストール
+      - name: poetry / pipenv をインストール
+        run: pip install poetry pipenv
+
+      # GITHUB_TOKEN で認証してチェックアウトし、git push が使える認証情報を設定する
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+
+      # 自リポジトリの open Dependabot アラートを取得し /tmp/alerts.json に保存する
+      #
+      # バグ修正:
+      # 1. --paginate を使わず per_page=100 を明示
+      #    （--paginate は各ページに -q を個別適用して結果を連結するため、
+      #      複数ページ時に jq length が複数行出力されカウントが壊れる）
+      # 2. .vulnerabilities[0] の決め打ちをやめ ecosystem でフィルタして取得
+      #    （advisory に複数の ecosystem エントリが含まれる場合に誤ったバージョンを参照するバグを修正）
+      # 3. --argjson でシェル変数を渡して jq 変数とシェル変数の混在による quoting 問題を回避
+      - name: open Dependabot アラートを取得
+        id: fetch-alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SEVERITY_FILTER=$(echo "$SEVERITY" | tr ' ' '\n' | jq -R . | jq -sc .)
+
+          if ! gh api \
+            "repos/${{ github.repository }}/dependabot/alerts?state=open&per_page=100" \
+            > /tmp/alerts-raw.json 2>/dev/null; then
+            echo "[]" > /tmp/alerts-raw.json
+          fi
+
+          # ecosystem でフィルタして該当する first_patched_version を取得する
+          # 配列に変換してから .[0] で取得することで、空ストリームによる jq エラーを回避する
+          jq --argjson severity_filter "$SEVERITY_FILTER" '
+            [
+              .[] |
+              select(.security_advisory.severity | IN($severity_filter[])) |
+              . as $alert |
+              ([
+                $alert.security_advisory.vulnerabilities[] |
+                select(
+                  .package.ecosystem == $alert.dependency.package.ecosystem and
+                  .first_patched_version != null
+                ) |
+                .first_patched_version.identifier
+              ] | if length > 0 then .[0] else null end) as $fixed |
+              select($fixed != null) |
+              {
+                pkg: $alert.dependency.package.name,
+                ecosystem: $alert.dependency.package.ecosystem,
+                fixed: $fixed,
+                severity: $alert.security_advisory.severity,
+                summary: $alert.security_advisory.summary
+              }
+            ]
+          ' /tmp/alerts-raw.json > /tmp/alerts.json
+
+          ALERT_COUNT=$(jq length /tmp/alerts.json)
+          echo "対象アラート: ${ALERT_COUNT} 件"
+          cat /tmp/alerts.json
+          echo "alert_count=$ALERT_COUNT" >> "$GITHUB_OUTPUT"
+
+      # ロックファイル・パッケージファイルの種類でパッケージマネージャーを判定し
+      # PKG_FILE（編集対象）と LOCKFILE（ロックファイル）を環境変数にセットする
+      # アラートが 0 件の場合はこのステップ以降の if チェーンが自動的にスキップされる
+      - name: パッケージマネージャーを判定
+        id: pkg-manager
+        if: steps.fetch-alerts.outputs.alert_count != '0'
+        run: |
+          if [ -f "pnpm-lock.yaml" ]; then
+            echo "PKG_MANAGER=pnpm" >> "$GITHUB_ENV"
+            echo "PKG_FILE=package.json" >> "$GITHUB_ENV"
+            echo "LOCKFILE=pnpm-lock.yaml" >> "$GITHUB_ENV"
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          elif [ -f "yarn.lock" ]; then
+            echo "PKG_MANAGER=yarn" >> "$GITHUB_ENV"
+            echo "PKG_FILE=package.json" >> "$GITHUB_ENV"
+            echo "LOCKFILE=yarn.lock" >> "$GITHUB_ENV"
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          elif [ -f "package-lock.json" ]; then
+            echo "PKG_MANAGER=npm" >> "$GITHUB_ENV"
+            echo "PKG_FILE=package.json" >> "$GITHUB_ENV"
+            echo "LOCKFILE=package-lock.json" >> "$GITHUB_ENV"
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          elif [ -f "requirements.txt" ]; then
+            echo "PKG_MANAGER=pip" >> "$GITHUB_ENV"
+            echo "PKG_FILE=requirements.txt" >> "$GITHUB_ENV"
+            echo "LOCKFILE=" >> "$GITHUB_ENV"
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          elif [ -f "pyproject.toml" ] && grep -q '\[tool\.poetry\]' pyproject.toml; then
+            echo "PKG_MANAGER=poetry" >> "$GITHUB_ENV"
+            echo "PKG_FILE=pyproject.toml" >> "$GITHUB_ENV"
+            echo "LOCKFILE=poetry.lock" >> "$GITHUB_ENV"
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          elif [ -f "Pipfile" ]; then
+            echo "PKG_MANAGER=pipenv" >> "$GITHUB_ENV"
+            echo "PKG_FILE=Pipfile" >> "$GITHUB_ENV"
+            echo "LOCKFILE=Pipfile.lock" >> "$GITHUB_ENV"
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::対応するパッケージマネージャーが見つかりません。スキップします。"
+          fi
+
+      # ブランチ名に github.run_id を使うことでレースコンディションを回避する
+      # （並列で複数リポジトリに dispatch されても run_id は各実行で一意になる）
+      - name: 修正ブランチを作成
+        if: steps.pkg-manager.outputs.supported == 'true'
+        run: |
+          BRANCH="fix/dependabot-${{ github.run_id }}"
+          git checkout -b "$BRANCH"
+          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+      # 各パッケージファイルにバージョン制約を書き込む
+      #
+      # バージョン制約の方針:
+      # - JS (pnpm/yarn/npm overrides): ^FIXED を使用
+      #   >= だと次のメジャーバージョンまで許容してしまうため、semver の ^ で上限を設ける
+      # - Python (pip/poetry/pipenv): >=FIXED を維持
+      #   PEP 440 は semver ではなく ^ 記号が無効なため >= を使用する
+      - name: パッケージファイルにバージョン制約を適用
+        if: steps.pkg-manager.outputs.supported == 'true'
+        run: |
+          jq -c '.[]' /tmp/alerts.json | while read -r alert; do
+            PKG=$(echo "$alert" | jq -r '.pkg')
+            FIXED=$(echo "$alert" | jq -r '.fixed')
+
+            if [ "$PKG_MANAGER" = "pnpm" ]; then
+              # pnpm.overrides に ^FIXED でピンする（semver: メジャーバージョン内に限定）
+              jq --arg pkg "$PKG" --arg ver "^$FIXED" \
+                '.pnpm.overrides[$pkg] = $ver' \
+                package.json > /tmp/pkg.json && mv /tmp/pkg.json package.json
+
+            elif [ "$PKG_MANAGER" = "yarn" ]; then
+              jq --arg pkg "$PKG" --arg ver "^$FIXED" \
+                '.resolutions[$pkg] = $ver' \
+                package.json > /tmp/pkg.json && mv /tmp/pkg.json package.json
+
+            elif [ "$PKG_MANAGER" = "npm" ]; then
+              jq --arg pkg "$PKG" --arg ver "^$FIXED" \
+                '.overrides[$pkg] = $ver' \
+                package.json > /tmp/pkg.json && mv /tmp/pkg.json package.json
+
+            elif [ "$PKG_MANAGER" = "pip" ]; then
+              # ハイフン・アンダースコアを同一視してから既存エントリを削除し追記
+              PKG_PATTERN=$(echo "$PKG" | sed 's/[-_]/[-_]/g')
+              grep -iv "^${PKG_PATTERN}" requirements.txt > /tmp/req.txt || true
+              echo "${PKG}>=${FIXED}" >> /tmp/req.txt
+              mv /tmp/req.txt requirements.txt
+
+            elif [ "$PKG_MANAGER" = "poetry" ]; then
+              PKG_ESC=$(printf '%s' "$PKG" | sed 's/[][\.*^$()+?{|]/\\&/g')
+              if grep -qiE "^${PKG_ESC}[[:space:]]*=" pyproject.toml; then
+                sed -i "s/^${PKG_ESC}[[:space:]]*=.*/${PKG} = '>=${FIXED}'/" pyproject.toml
+              else
+                sed -i "/^\[tool\.poetry\.dependencies\]/a ${PKG} = '>=${FIXED}'" pyproject.toml
+              fi
+
+            elif [ "$PKG_MANAGER" = "pipenv" ]; then
+              PKG_ESC=$(printf '%s' "$PKG" | sed 's/[][\.*^$()+?{|]/\\&/g')
+              if grep -qiE "^${PKG_ESC}[[:space:]]*=" Pipfile; then
+                sed -i "s/^${PKG_ESC}[[:space:]]*=.*/${PKG} = '>=${FIXED}'/" Pipfile
+              else
+                sed -i "/^\[packages\]/a ${PKG} = '>=${FIXED}'" Pipfile
+              fi
+            fi
+          done
+
+      # バージョン制約を反映したロックファイルを再生成する
+      # poetry でエラーが発生した場合（Python version conflict 等）はステップをそのまま fail させる
+      # エラーメッセージのパースは行わず、ワークフロー利用者に手動対応を促す
+      - name: 依存関係をインストール
+        if: steps.pkg-manager.outputs.supported == 'true'
+        run: |
+          case "$PKG_MANAGER" in
+            pnpm)   pnpm install --no-frozen-lockfile ;;
+            yarn)   yarn install --ignore-engines ;;
+            npm)    npm install ;;
+            pip)    pip install -r requirements.txt ;;
+            poetry) poetry lock && poetry install ;;
+            pipenv) pipenv install ;;
+          esac
+
+      # git status --porcelain で untracked file も含めて変更を確認する
+      # git diff --stat は git add 前だと untracked file（新規ロックファイル等）を検出できない
+      - name: 変更差分を確認
+        id: changes
+        if: steps.pkg-manager.outputs.supported == 'true'
+        run: |
+          DIFF=$(git status --porcelain)
+          if [ -z "$DIFF" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "変更なし: アラートは既に修正済みか overrides が不要です"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # コミットメッセージをファイル経由で渡して YAML 構文エラーを回避する
+      - name: 変更をコミット
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "dependabot-auto-fix[bot]"
+          git config user.email "dependabot-auto-fix[bot]@users.noreply.github.com"
+
+          PKG_LIST=$(jq -r '.[] | "- \(.pkg) >=\(.fixed) (\(.severity)): \(.summary[:60])"' \
+            /tmp/alerts.json | head -20)
+
+          printf 'fix: resolve Dependabot vulnerabilities via package overrides\n\n%s\n\n🤖 Auto-generated by dependabot-auto-fix GitHub Actions\n' \
+            "$PKG_LIST" > /tmp/commit-msg.txt
+
+          git add "$PKG_FILE"
+          [ -n "${LOCKFILE:-}" ] && [ -f "$LOCKFILE" ] && git add "$LOCKFILE" || true
+          git commit -F /tmp/commit-msg.txt
+
+      # actions/checkout が GITHUB_TOKEN で認証設定済みのため remote URL の書き換えは不要
+      - name: ブランチをプッシュ
+        if: steps.changes.outputs.changed == 'true'
+        run: git push origin "$BRANCH"
+
+      # PR body をファイル経由で渡して YAML 構文エラーを回避する
+      - name: Pull Request を作成
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PKG_TABLE=$(jq -r '
+            ["| パッケージ | severity | 修正バージョン | 概要 |",
+             "|-----------|---------|--------------|------|"]
+            + [.[] | "| \(.pkg) | \(.severity) | >=\(.fixed) | \(.summary[:50]) |"]
+            | .[]
+          ' /tmp/alerts.json)
+
+          {
+            echo "## 概要"
+            echo ""
+            echo "$PKG_TABLE"
+            echo ""
+            echo "## 対応方法"
+            echo ""
+            case "$PKG_MANAGER" in
+              pnpm|yarn|npm)
+                echo "\`$PKG_MANAGER\` の overrides 機能で間接依存を強制アップグレード。"
+                echo ""
+                echo "> ⚠️ **暫定対応です。** 直接依存のアップグレードで解消できる場合は overrides を削除してください。"
+                ;;
+              pip|poetry|pipenv)
+                echo "Python には overrides 相当の仕組みがないため、脆弱パッケージを直接依存として明示的に追加。"
+                echo ""
+                echo "> ⚠️ **暫定対応です。** 本来は依存元ライブラリのバージョンアップで解消してください。"
+                ;;
+            esac
+            echo ""
+            echo "## テストプラン"
+            echo ""
+            echo "- [ ] \`$PKG_MANAGER install\` がエラーなく通ること"
+            echo "- [ ] ビルド・テストが正常動作すること"
+            echo "- [ ] マージ後に Dependabot アラートが closed になること"
+            echo ""
+            echo "🤖 Auto-generated by [dependabot-auto-fix](https://github.com/${{ github.repository }})"
+          } > /tmp/pr-body.txt
+
+          gh pr create \
+            --title "fix: resolve Dependabot vulnerabilities ($(date +%Y-%m-%d))" \
+            --base "${{ github.ref_name }}" \
+            --head "$BRANCH" \
+            --body-file /tmp/pr-body.txt
