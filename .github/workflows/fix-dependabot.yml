@@ -345,4 +345,5 @@ jobs:
             --title "fix: resolve Dependabot vulnerabilities ($(date +%Y-%m-%d))" \
             --base "$BASE_BRANCH" \
             --head "$BRANCH" \
-            --body-file "${RUNNER_TEMP}/pr-body.txt"
+            --body-file "${RUNNER_TEMP}/pr-body.txt" \
+            --reviewer i-s-23
