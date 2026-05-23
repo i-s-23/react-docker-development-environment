@@ -17,9 +17,9 @@ concurrency:
   group: fix-dependabot
   cancel-in-progress: false
 
-# GitHub App は使用しない。GITHUB_TOKEN のみで完結する
+# Dependabot アラート取得には fine-grained PAT が必要（GITHUB_TOKEN は Dependabot alerts API に非対応）
+# リポジトリ Secret に DEPENDABOT_READ_TOKEN を設定すること（詳細は .github/workflows/README.md を参照）
 permissions:
-  security-events: read  # 自リポジトリの Dependabot アラート取得
   contents: write        # ブランチ作成・push
   pull-requests: write   # PR 作成
 
@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      SEVERITY: ${{ inputs.severity || 'critical high' }}
+      SEVERITY: ${{ inputs.severity || 'critical high medium' }}
     steps:
       # JS 依存の overrides 適用・インストールに必要な Node.js 環境をセットアップ
       - name: Node.js をセットアップ
@@ -59,10 +59,11 @@ jobs:
           token: ${{ github.token }}
 
       # 自リポジトリの open Dependabot アラートを全件取得する（100 件超でも漏れなし）
+      # GITHUB_TOKEN は Dependabot alerts API に非対応（HTTP 403）のため fine-grained PAT を使用する
       - name: open Dependabot アラートを取得
         id: fetch-alerts
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.DEPENDABOT_READ_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
           set -o pipefail
