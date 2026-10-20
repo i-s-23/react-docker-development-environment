@@ -61,7 +61,8 @@
       "ws": "^5.2.5",
       "browserslist": "^4.28.7",
       "vitest": "^4.1.11",
-      "@vitest/mocker": "^4.1.11"
+      "@vitest/mocker": "^4.1.11",
+      "source-map-js": "^1.2.2"
     }
   }
 }
